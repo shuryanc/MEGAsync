@@ -74,7 +74,7 @@ void WindowsPlatform::initialize(int argc, char *argv[])
 
 void WindowsPlatform::prepareForSync()
 {
-    Preferences *preferences = Preferences::instance();
+    (void)Preferences::instance();
 
     QProcess p;
     p.start(QString::fromUtf8("net use"));
@@ -107,7 +107,7 @@ void WindowsPlatform::prepareForSync()
                         MegaApi::log(MegaApi::LOG_LEVEL_INFO, QString::fromUtf8("Network drive detected: %1 (%2)")
                                     .arg(networkName).arg(driveName).toUtf8().constData());
 
-                        QStringList localFolders = preferences->getLocalFolders();
+                        QStringList localFolders = Model::instance()->getLocalFolders();
                         for (int i = 0; i < localFolders.size(); i++)
                         {
                             QString localFolder = localFolders.at(i);
@@ -143,8 +143,8 @@ void WindowsPlatform::prepareForSync()
 bool WindowsPlatform::enableTrayIcon(QString executable)
 {
     HRESULT hr;
-    ITrayNotify *m_ITrayNotify;
-    ITrayNotifyNew *m_ITrayNotifyNew;
+    ITrayNotify *m_ITrayNotify = nullptr;
+    ITrayNotifyNew *m_ITrayNotifyNew = nullptr;
 
     hr = CoCreateInstance (
           __uuidof (TrayNotify),
@@ -286,7 +286,7 @@ bool DeleteRegKey(HKEY key, LPTSTR subkey, REGSAM samDesired)
         return (result == ERROR_FILE_NOT_FOUND);
     }
 
-    int len =  _tcslen(subkey);
+    size_t len =  _tcslen(subkey);
     if (!len || len >= (MAX_PATH - 1) || _tcscpy_s(keyPath, MAX_PATH, subkey))
     {
         RegCloseKey(hKey);
@@ -303,7 +303,7 @@ bool DeleteRegKey(HKEY key, LPTSTR subkey, REGSAM samDesired)
 
     do
     {
-        maxSize = MAX_PATH - len;
+        maxSize = DWORD(MAX_PATH - len);
     } while (RegEnumKeyEx(hKey, 0, endPos, &maxSize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS
              && DeleteRegKey(key, keyPath, samDesired));
 
@@ -764,7 +764,10 @@ void WindowsPlatform::syncFolderAdded(QString syncPath, QString syncName, QStrin
         addSyncToLeftPane(syncPath, syncName, syncID);
     }
 
+#pragma warning(push)
+#pragma warning(disable: 4996) // declared deprecated
     DWORD dwVersion = GetVersion();
+#pragma warning(pop)
     DWORD dwMajorVersion = (DWORD)(LOBYTE(LOWORD(dwVersion)));
     int iconIndex = (dwMajorVersion<6) ? 2 : 3;
 
@@ -815,6 +818,15 @@ void WindowsPlatform::syncFolderAdded(QString syncPath, QString syncName, QStrin
     WCHAR *wLinksPath = (WCHAR *)linksPath.utf16();
     SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATH | SHCNF_FLUSHNOWAIT, wLinksPath, NULL);
     SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATH | SHCNF_FLUSHNOWAIT, syncPath.utf16(), NULL);
+
+    //Hide debris folder
+    QString debrisPath = QDir::toNativeSeparators(syncPath + QDir::separator() + QString::fromAscii(MEGA_DEBRIS_FOLDER));
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW((LPCWSTR)debrisPath.utf16(), GetFileExInfoStandard, &fad))
+    {
+        SetFileAttributesW((LPCWSTR)debrisPath.utf16(), fad.dwFileAttributes | FILE_ATTRIBUTE_HIDDEN);
+    }
+
 }
 
 void WindowsPlatform::syncFolderRemoved(QString syncPath, QString syncName, QString syncID)
@@ -891,6 +903,8 @@ QByteArray WindowsPlatform::encrypt(QByteArray data, QByteArray key)
 
     if (!CryptProtectData(&dataIn, L"", &entropy, NULL, NULL, 0, &dataOut))
     {
+        MegaApi::log(MegaApi::LOG_LEVEL_ERROR, QString::fromUtf8("Error encrypting data: %1. data.size = %2, key.size = %3")
+                     .arg(GetLastError()).arg(data.size()).arg(key.size()).toUtf8().constData());
         return data;
     }
 
@@ -911,7 +925,11 @@ QByteArray WindowsPlatform::decrypt(QByteArray data, QByteArray key)
     entropy.cbData = key.size();
 
     if (!CryptUnprotectData(&dataIn, NULL, &entropy, NULL, NULL, 0, &dataOut))
+    {
+        MegaApi::log(MegaApi::LOG_LEVEL_ERROR, QString::fromUtf8("Error encrypting data: %1. data.size = %2, key.size = %3")
+                     .arg(GetLastError()).arg(data.size()).arg(key.size()).toUtf8().constData());
         return data;
+    }
 
     QByteArray result((const char *)dataOut.pbData, dataOut.cbData);
     LocalFree(dataOut.pbData);
@@ -923,27 +941,45 @@ QByteArray WindowsPlatform::getLocalStorageKey()
     HANDLE hToken = NULL;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken))
     {
+        MegaApi::log(MegaApi::LOG_LEVEL_ERROR, QString::fromUtf8("Error getting Local Storage key. At OpenProcessToken: %1")
+                     .arg(GetLastError()).toUtf8().constData());
         return QByteArray();
     }
 
     DWORD dwBufferSize = 0;
-    GetTokenInformation(hToken, TokenUser, NULL, 0, &dwBufferSize);
-    if (!dwBufferSize)
+    auto r = GetTokenInformation(hToken, TokenUser, NULL, 0, &dwBufferSize); //Note: return value can be ERROR_INSUFFICIENT_BUFFER in an otherwise succesful call (just getting size)
+    if ((!r && GetLastError() != ERROR_INSUFFICIENT_BUFFER) || !dwBufferSize)
     {
+        MegaApi::log(MegaApi::LOG_LEVEL_ERROR, QString::fromUtf8("Error getting Local Storage key. At GetTokenInformation size retrieval: %1")
+                     .arg(GetLastError()).toUtf8().constData());
         CloseHandle(hToken);
         return QByteArray();
     }
 
     PTOKEN_USER userToken = (PTOKEN_USER)new char[dwBufferSize];
-    if (!GetTokenInformation(hToken, TokenUser, userToken, dwBufferSize, &dwBufferSize) ||
-            !IsValidSid(userToken->User.Sid))
+    if (!GetTokenInformation(hToken, TokenUser, userToken, dwBufferSize, &dwBufferSize))
     {
+        MegaApi::log(MegaApi::LOG_LEVEL_ERROR, QString::fromUtf8("Error getting Local Storage key. At GetTokenInformation: %1")
+                     .arg(GetLastError()).toUtf8().constData());
         CloseHandle(hToken);
         delete userToken;
         return QByteArray();
     }
 
-    DWORD dwLength =  GetLengthSid(userToken->User.Sid);
+    if (!IsValidSid(userToken->User.Sid))
+    {
+        MegaApi::log(MegaApi::LOG_LEVEL_ERROR, QString::fromUtf8("Error getting Local Storage key. At IsValidSid: %1")
+                     .arg(GetLastError()).toUtf8().constData());
+        CloseHandle(hToken);
+        delete userToken;
+        return QByteArray();
+    }
+
+    DWORD dwLength = GetLengthSid(userToken->User.Sid);
+
+    MegaApi::log(MegaApi::LOG_LEVEL_DEBUG, QString::fromUtf8("Getting Local Storage key. Sid length: %1")
+                 .arg(dwLength).toUtf8().constData());
+
     QByteArray result((char *)userToken->User.Sid, dwLength);
     CloseHandle(hToken);
     delete userToken;
@@ -1011,6 +1047,7 @@ void WindowsPlatform::enableDialogBlur(QDialog *dialog)
     // this feature doesn't work well yet
     return;
 
+#if 0
     bool win10 = false;
     HWND hWnd = (HWND)dialog->winId();
     dialog->setAttribute(Qt::WA_TranslucentBackground, true);
@@ -1036,7 +1073,7 @@ void WindowsPlatform::enableDialogBlur(QDialog *dialog)
         const pSetWindowCompositionAttribute SetWindowCompositionAttribute = (pSetWindowCompositionAttribute)GetProcAddress(hModule, "SetWindowCompositionAttribute");
         if (SetWindowCompositionAttribute)
         {
-            ACCENTPOLICY policy = { 3, 0, 0xFFFFFFFF, 0 };
+            ACCENTPOLICY policy = { 3, 0, int(0xFFFFFFFF), 0 };
             WINCOMPATTRDATA data = { 19, &policy, sizeof(ACCENTPOLICY) };
             SetWindowCompositionAttribute(hWnd, &data);
             win10 = true;
@@ -1052,12 +1089,13 @@ void WindowsPlatform::enableDialogBlur(QDialog *dialog)
         QtWin::enableBlurBehindWindow(dialog);
     }
 #endif
+#endif
 }
 
 void WindowsPlatform::activateBackgroundWindow(QDialog *window)
 {
     DWORD currentThreadId = GetCurrentThreadId();
-    DWORD foregroundThreadId;
+    DWORD foregroundThreadId = 0;
     HWND foregroundWindow;
     bool threadAttached = false;
 
@@ -1277,7 +1315,7 @@ bool WindowsPlatform::registerUpdateJob()
 void WindowsPlatform::execBackgroundWindow(QDialog *window)
 {
     DWORD currentThreadId = GetCurrentThreadId();
-    DWORD foregroundThreadId;
+    DWORD foregroundThreadId = 0;
     HWND foregroundWindow;
     bool threadAttached = false;
 
@@ -1442,7 +1480,7 @@ ShellNotifier::~ShellNotifier()
 
     // signal the thread to stop
     {
-        unique_lock<std::mutex> lock(mQueueAccessMutex);
+        std::unique_lock<std::mutex> lock(mQueueAccessMutex);
         mExit = true;
         mWaitCondition.notify_all();
     }
@@ -1458,7 +1496,7 @@ void ShellNotifier::enqueueItemChange(std::string&& localPath)
         mThread = std::thread([this]() { doInThread(); });
     }
 
-    unique_lock<std::mutex> lock(mQueueAccessMutex);
+    std::unique_lock<std::mutex> lock(mQueueAccessMutex);
 
     mPendingNotifications.emplace(localPath);
     mWaitCondition.notify_one();
@@ -1471,7 +1509,7 @@ void ShellNotifier::doInThread()
         std::string path;
 
         { // lock scope
-            unique_lock<std::mutex> lock(mQueueAccessMutex);
+            std::unique_lock<std::mutex> lock(mQueueAccessMutex);
 
             if (mPendingNotifications.empty())
             {
@@ -1503,3 +1541,8 @@ void ShellNotifier::notify(const std::string& path) const
     // same as in WindowsPlatform::notifyItemChange()
     SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATH, path.data(), NULL);
 }
+
+// Platform-specific strings
+const char* WindowsPlatform::settingsString {QT_TRANSLATE_NOOP("Platform", "Settings")};
+const char* WindowsPlatform::exitString {QT_TRANSLATE_NOOP("Platform", "Exit")};
+const char* WindowsPlatform::fileExplorerString {QT_TRANSLATE_NOOP("Platform", "Show in Explorer")};

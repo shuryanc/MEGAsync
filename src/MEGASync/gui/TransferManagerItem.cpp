@@ -81,8 +81,8 @@ void TransferManagerItem::setType(int type, bool isSyncTransfer)
         this->loadIconResource = QPixmap(ratio < 2 ? QString::fromUtf8(":/images/sync_item_ico.png")
                                                    : QString::fromUtf8(":/images/sync_item_ico@2x.png"));
         delete animation;
-        animation = new QMovie(ratio < 2 ? QString::fromUtf8(":/images/synching.gif")
-                                         : QString::fromUtf8(":/images/synching@2x.gif"));
+        animation = new QMovie(ratio < 2 ? QString::fromUtf8(":/animations/synching.gif")
+                                         : QString::fromUtf8(":/animations/synching@2x.gif"));
         connect(animation, SIGNAL(frameChanged(int)), this, SLOT(frameChanged(int)));
     }
     else
@@ -100,8 +100,8 @@ void TransferManagerItem::setType(int type, bool isSyncTransfer)
             if (!isSyncTransfer)
             {
                 delete animation;
-                animation = new QMovie(ratio < 2 ? QString::fromUtf8(":/images/uploading.gif")
-                                                 : QString::fromUtf8(":/images/uploading@2x.gif"));
+                animation = new QMovie(ratio < 2 ? QString::fromUtf8(":/animations/uploading.gif")
+                                                 : QString::fromUtf8(":/animations/uploading@2x.gif"));
                 connect(animation, SIGNAL(frameChanged(int)), this, SLOT(frameChanged(int)));
             }
 
@@ -114,8 +114,8 @@ void TransferManagerItem::setType(int type, bool isSyncTransfer)
             if (!isSyncTransfer)
             {
                 delete animation;
-                animation = new QMovie(ratio < 2 ? QString::fromUtf8(":/images/downloading.gif")
-                                                 : QString::fromUtf8(":/images/downloading@2x.gif"));
+                animation = new QMovie(ratio < 2 ? QString::fromUtf8(":/animations/downloading.gif")
+                                                 : QString::fromUtf8(":/animations/downloading@2x.gif"));
                 connect(animation, SIGNAL(frameChanged(int)), this, SLOT(frameChanged(int)));
             }
 
@@ -184,23 +184,13 @@ void TransferManagerItem::updateTransfer()
         {
             // Update remaining time
             long long remainingBytes = totalSize - totalTransferredBytes;
-            int totalRemainingSeconds = meanTransferSpeed ? remainingBytes / meanTransferSpeed : 0;
+            const auto totalRemainingSeconds = mTransferRemainigTime.calculateRemainingTimeSeconds(transferSpeed, remainingBytes);
 
             QString remainingTime;
-            if (totalRemainingSeconds)
+            const bool printableValue{totalRemainingSeconds.count() && totalRemainingSeconds < std::chrono::seconds::max()};
+            if (printableValue)
             {
-                if (totalRemainingSeconds < 60)
-                {
-                    remainingTime = QString::fromUtf8("%1 <span style=\"color:#777777; text-decoration:none;\">m</span>").arg(QString::fromUtf8("&lt; 1"));
-                }
-                else
-                {
-                    remainingTime = Utilities::getTimeString(totalRemainingSeconds, false);
-                }
-            }
-            else
-            {
-                remainingTime = QString::fromAscii("");
+                remainingTime = Utilities::getTimeString(totalRemainingSeconds.count());
             }
             ui->lRemainingTime->setText(remainingTime);
 

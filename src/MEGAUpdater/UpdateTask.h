@@ -20,6 +20,8 @@
 #include <cryptopp/hmac.h>
 #include <cryptopp/pwdbased.h>
 
+namespace
+{
 #if CRYPTOPP_VERSION >= 600 && ((__cplusplus >= 201103L) || (__RPCNDR_H_VERSION__ == 500))
 using byte = CryptoPP::byte;
 #elif __RPCNDR_H_VERSION__ != 500
@@ -45,13 +47,14 @@ public:
     ~SignatureChecker();
 
     void init();
-    void add(const char *data, unsigned size);
+    void add(const char *data, size_t size);
     bool checkSignature(const char *base64Signature);
 
 protected:
     CryptoPP::Integer key[2];
     CryptoPP::SHA512 hash;
 };
+} // end of namespace
 
 class UpdateTask
 {
@@ -65,7 +68,7 @@ protected:
     bool processUpdateFile(FILE *fd);
     bool fileExist(const char* path);
     void initSignature();
-    void addToSignature(const char *bytes, int length);
+    void addToSignature(const char *bytes, size_t length);
     bool checkSignature(std::string value);
     bool alreadyInstalled(std::string relativePath, std::string fileSignature);
     bool alreadyDownloaded(std::string relativePath, std::string fileSignature);

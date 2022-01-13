@@ -54,7 +54,7 @@ void QAlertsModel::insertAlerts(MegaUserAlertList *alerts, bool copy)
                     }
                 }
 
-                int row = alertOrder.size() - 1;
+                int row = int(alertOrder.size()) - 1;
                 beginRemoveRows(QModelIndex(), row, row);
                 alertsMap.remove(alertToDelete->getId());
                 alertOrder.pop_back();
@@ -100,6 +100,13 @@ void QAlertsModel::insertAlerts(MegaUserAlertList *alerts, bool copy)
                             unSeenNotifications[checkAlertType(alert->getType())] += alert->getSeen() ? -1 : 1;
                         }
                     }
+
+                    AlertItem *udpatedAlertItem = alertItems[alert->getId()];
+                    if (udpatedAlertItem)
+                    {
+                        udpatedAlertItem->setAlertData(alert);
+                    }
+
                     delete old;
 
                     //update row element
@@ -172,7 +179,7 @@ int QAlertsModel::rowCount(const QModelIndex &parent) const
     {
         return 0;
     }
-    return alertOrder.size();
+    return int(alertOrder.size());
 }
 
 QVariant QAlertsModel::data(const QModelIndex &index, int role) const
@@ -203,7 +210,7 @@ void QAlertsModel::refreshAlerts()
 {
     if (alertOrder.size())
     {
-        emit dataChanged(index(0, 0, QModelIndex()), index(alertOrder.size() - 1, 0, QModelIndex()));
+        emit dataChanged(index(0, 0, QModelIndex()), index(int(alertOrder.size()) - 1, 0, QModelIndex()));
     }
 }
 
@@ -234,30 +241,45 @@ int QAlertsModel::checkAlertType(int alertType) const
             case MegaUserAlert::TYPE_UPDATEDPENDINGCONTACTOUTGOING_ACCEPTED:
             case MegaUserAlert::TYPE_UPDATEDPENDINGCONTACTOUTGOING_DENIED:
                 return ALERT_CONTACTS;
-                break;
 
             case MegaUserAlert::TYPE_NEWSHARE:
             case MegaUserAlert::TYPE_DELETEDSHARE:
             case MegaUserAlert::TYPE_NEWSHAREDNODES:
             case MegaUserAlert::TYPE_REMOVEDSHAREDNODES:
                 return ALERT_SHARES;
-                break;
 
             case MegaUserAlert::TYPE_PAYMENT_SUCCEEDED:
             case MegaUserAlert::TYPE_PAYMENT_FAILED:
             case MegaUserAlert::TYPE_PAYMENTREMINDER:
                 return ALERT_PAYMENT;
-                break;
 
             case MegaUserAlert::TYPE_TAKEDOWN:
             case MegaUserAlert::TYPE_TAKEDOWN_REINSTATED:
                 return ALERT_TAKEDOWNS;
-                break;
 
             default:
                 return ALERT_UNKNOWN;
-                break;
     }
 
-    return -1;
+#ifndef WIN32
+    return -1; // warning C4702: unreachable code
+#endif
+}
+
+void QAlertsModel::refreshAlertItem(unsigned id)
+{
+    int row = 0;
+    for (auto it = alertOrder.begin(); it != alertOrder.end() && *it != id; ++it)
+    {
+        ++row;
+    }
+
+    assert(row < alertOrder.size());
+    if (row >= alertOrder.size())
+    {
+        return;
+    }
+
+    emit dataChanged(index(row, 0, QModelIndex()), index(row, 0, QModelIndex()));
+
 }

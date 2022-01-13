@@ -11,6 +11,7 @@
 #include <QDesktopWidget>
 #include "MegaApplication.h"
 #include "control/gzjoin.h"
+#include "platform/Platform.h"
 
 #ifndef WIN32
 #include "megaapi.h"
@@ -24,6 +25,8 @@ using namespace mega;
 
 QHash<QString, QString> Utilities::extensionIcons;
 QHash<QString, QString> Utilities::languageNames;
+
+std::unique_ptr<ThreadPool> ThreadPoolSingleton::instance = nullptr;
 
 const unsigned long long KB = 1024;
 const unsigned long long MB = 1024 * KB;
@@ -143,6 +146,12 @@ void Utilities::initializeExtensions()
      extensionIcons[QString::fromAscii("key")] = QString::fromAscii("keynote.png");
 }
 
+
+void Utilities::queueFunctionInAppThread(std::function<void()> fun) {
+   QObject temporary;
+   QObject::connect(&temporary, &QObject::destroyed, qApp, std::move(fun), Qt::QueuedConnection);
+}
+
 void Utilities::getFolderSize(QString folderPath, long long *size)
 {
     if (!folderPath.size())
@@ -208,7 +217,6 @@ QString Utilities::languageCodeToString(QString code)
         languageNames[QString::fromAscii("ko")] = QString::fromUtf8("한국어"); // korean
         languageNames[QString::fromAscii("nl")] = QString::fromUtf8("Nederlands");
         languageNames[QString::fromAscii("pl")] = QString::fromUtf8("Polski");
-        languageNames[QString::fromAscii("pt_BR")] = QString::fromUtf8("Português Brasil");
         languageNames[QString::fromAscii("pt")] = QString::fromUtf8("Português");
         languageNames[QString::fromAscii("ro")] = QString::fromUtf8("Română");
         languageNames[QString::fromAscii("ru")] = QString::fromUtf8("Pусский");
@@ -249,6 +257,8 @@ QString Utilities::languageCodeToString(QString code)
         // languageNames[QString::fromAscii("tr")] = QString::fromUtf8("Türkçe");
         // languageNames[QString::fromAscii("tl")] = QString::fromUtf8("Tagalog");
         // languageNames[QString::fromAscii("uk")] = QString::fromUtf8("Українська");
+        // languageNames[QString::fromAscii("pt")] = QString::fromUtf8("Português");
+
 
     }
     return languageNames.value(code);
@@ -398,12 +408,23 @@ bool Utilities::verifySyncedFolderLimits(QString path)
     }
     return true;
 }
-QString Utilities::getTimeString(long long secs, bool secondPrecision)
+
+void replaceLeadingZeroCharacterWithSpace(QString& string)
+{
+    if(!string.isEmpty() && string.at(0) == QLatin1Char('0'))
+    {
+        string.replace(0, 1, QLatin1Char(' '));
+    }
+}
+
+QString Utilities::getTimeString(long long secs, bool secondPrecision, bool color)
 {
     int seconds = (int) secs % 60;
     int minutes = (int) ((secs / 60) % 60);
     int hours   = (int) (secs / (60 * 60)) % 24;
     int days = (int)(secs / (60 * 60 * 24));
+    QString colorString (color ? QLatin1String("color:#777777;") : QString());
+
 
     int items = 0;
     QString time;
@@ -411,39 +432,80 @@ QString Utilities::getTimeString(long long secs, bool secondPrecision)
     if (days)
     {
         items++;
-        time.append(QString::fromUtf8(" %1 <span style=\"color:#777777; text-decoration:none;\">d</span>").arg(days));
+        time.append(QString::fromUtf8(" %1 ").arg(days, 2, 10, QLatin1Char('0')));
+        time.append(QString::fromUtf8("<span style=\"%1 text-decoration:none;\">d</span>").arg(colorString));
     }
 
     if (items || hours)
     {
         items++;
-        time.append(QString::fromUtf8(" %1 <span style=\"color:#777777; text-decoration:none;\">h</span>").arg(hours));
+        time.append(QString::fromUtf8(" %1 ").arg(hours, 2, 10, QLatin1Char('0')));
+        time.append(QString::fromUtf8("<span style=\"%1 text-decoration:none;\">h</span>").arg(colorString));
     }
 
     if (items == 2)
     {
         time = time.trimmed();
+        replaceLeadingZeroCharacterWithSpace(time);
         return time;
     }
 
     if (items || minutes)
     {
         items++;
-        time.append(QString::fromUtf8(" %1 <span style=\"color:#777777; text-decoration:none;\">m</span>").arg(minutes));
+        time.append(QString::fromUtf8(" %1 ").arg(minutes, 2, 10, QLatin1Char('0')));
+        time.append(QString::fromUtf8("<span style=\"%1 text-decoration:none;\">m</span>").arg(colorString));
     }
 
     if (items == 2)
     {
         time = time.trimmed();
+        replaceLeadingZeroCharacterWithSpace(time);
         return time;
     }
 
     if (secondPrecision)
     {
-        time.append(QString::fromUtf8(" %1 <span style=\"color:#777777; text-decoration:none;\">s</span>").arg(seconds));
+        time.append(QString::fromUtf8(" %1 ").arg(seconds, 2, 10, QLatin1Char('0')));
+        time.append(QString::fromUtf8("<span style=\"%1 text-decoration:none;\">s</span>").arg(colorString));
     }
     time = time.trimmed();
+    replaceLeadingZeroCharacterWithSpace(time);
     return time;
+}
+
+struct Postfix
+{
+    double value;
+    std::string letter;
+};
+
+const std::vector<Postfix> postfixes = {{1e12, "T"},
+                                     {1e9,  "G"},
+                                     {1e6,  "M"},
+                                     {1e3,  "K"}};
+
+constexpr auto maxStringSize = 4;
+
+QString Utilities::getQuantityString(unsigned long long quantity)
+{
+    for (const auto& postfix : postfixes)
+    {
+        if(static_cast<double>(quantity) >= postfix.value)
+        {
+            const double value{static_cast<double>(quantity) / postfix.value};
+            // QString::number(value, 'G', 3) is another way to do it but it rounds the result
+
+            QString valueString{QString::number(value).left(maxStringSize)};
+            if(valueString.contains(QStringLiteral(".")))
+            {
+                valueString.remove(QRegExp(QStringLiteral("0+$"))); // Remove any number of trailing 0's
+                valueString.remove(QRegExp(QStringLiteral("\\.$"))); // If the last character is just a '.' then remove it
+            }
+            return valueString + QString::fromStdString(postfix.letter);
+        }
+    }
+    return QString::number(quantity);
 }
 
 QString Utilities::getFinishedTimeString(long long secs)
@@ -524,26 +586,44 @@ QString Utilities::getSizeString(unsigned long long bytes)
     QLocale locale(language);
     if (bytes >= TB)
     {
-        return locale.toString( ((int)((10 * bytes) / TB))/10.0) + QString::fromAscii(" ") + QCoreApplication::translate("Utilities", "TB");
+        return locale.toString( ((int)((10 * bytes) / TB))/10.0) + QString::fromAscii(" ")
+                + QCoreApplication::translate("Utilities", "TB");
     }
 
     if (bytes >= GB)
     {
-        return locale.toString( ((int)((10 * bytes) / GB))/10.0) + QString::fromAscii(" ") + QCoreApplication::translate("Utilities", "GB");
+        return locale.toString( ((int)((10 * bytes) / GB))/10.0) + QString::fromAscii(" ")
+                + QCoreApplication::translate("Utilities", "GB");
     }
 
     if (bytes >= MB)
     {
-        return locale.toString( ((int)((10 * bytes) / MB))/10.0) + QString::fromAscii(" ") + QCoreApplication::translate("Utilities", "MB");
+        return locale.toString( ((int)((10 * bytes) / MB))/10.0) + QString::fromAscii(" ")
+                + QCoreApplication::translate("Utilities", "MB");
     }
 
     if (bytes >= KB)
     {
-        return locale.toString( ((int)((10 * bytes) / KB))/10.0) + QString::fromAscii(" ") + QCoreApplication::translate("Utilities", "KB");
+        return locale.toString( ((int)((10 * bytes) / KB))/10.0) + QString::fromAscii(" ")
+                + QCoreApplication::translate("Utilities", "KB");
     }
 
-    return locale.toString(bytes) + QStringLiteral(" ") + QCoreApplication::translate("Utilities", "Bytes");
+    return locale.toString(bytes) + QStringLiteral(" ")
+            + QCoreApplication::translate("Utilities", "Bytes");
 }
+
+QString Utilities::getSizeString(long long bytes)
+{
+    if (bytes >= 0)
+    {
+        return getSizeString(static_cast<unsigned long long>(bytes));
+    }
+    QString language = ((MegaApplication*)qApp)->getCurrentLanguageCode();
+    QLocale locale(language);
+    return locale.toString(bytes) + QStringLiteral(" ")
+            + QCoreApplication::translate("Utilities", "Bytes");
+}
+
 
 QString Utilities::extractJSONString(QString json, QString name)
 {
@@ -828,11 +908,11 @@ void Utilities::adjustToScreenFunc(QPoint position, QWidget *what)
     }
 }
 
-QString Utilities::minProPlanNeeded(MegaPricing *pricing, long long usedStorage)
+QString Utilities::minProPlanNeeded(std::shared_ptr<MegaPricing> pricing, long long usedStorage)
 {
     if (!pricing)
     {
-        return QString::fromUtf8("PRO");
+        return QString::fromUtf8("Pro");
     }
 
     int planNeeded = -1;
@@ -840,9 +920,10 @@ QString Utilities::minProPlanNeeded(MegaPricing *pricing, long long usedStorage)
     int products = pricing->getNumProducts();
     for (int i = 0; i < products; i++)
     {
-        if (pricing->getMonths(i) == 1)
+        //Skip business & non monthly plans to offer
+        if (!pricing->isBusinessType(i) && pricing->getMonths(i) == 1)
         {
-            if (usedStorage < (pricing->getGBStorage(i) * GB))
+            if (usedStorage < (pricing->getGBStorage(i) * (long long)GB))
             {
                 int currentAmountMonth = pricing->getAmountMonth(i);
                 if (planNeeded == -1 || currentAmountMonth < amountPlanNeeded)
@@ -885,20 +966,30 @@ QString Utilities::getReadablePROplanFromId(int identifier)
     switch (identifier)
     {
         case MegaAccountDetails::ACCOUNT_TYPE_LITE:
-            return QString::fromUtf8("PRO LITE");
+            return QCoreApplication::translate("Utilities","Pro Lite");
             break;
         case MegaAccountDetails::ACCOUNT_TYPE_PROI:
-            return QString::fromUtf8("PRO I");
+            return QCoreApplication::translate("Utilities","Pro I");
             break;
         case MegaAccountDetails::ACCOUNT_TYPE_PROII:
-            return QString::fromUtf8("PRO II");
+            return QCoreApplication::translate("Utilities","Pro II");
             break;
         case MegaAccountDetails::ACCOUNT_TYPE_PROIII:
-            return QString::fromUtf8("PRO III");
+            return QCoreApplication::translate("Utilities","Pro III");
             break;
     }
 
-    return QString::fromUtf8("PRO");
+    return QString::fromUtf8("Pro");
+}
+
+void Utilities::animateFadein(QWidget *object, int msecs)
+{
+    animateProperty(object, msecs, "opacity", 0.0, 1.0);
+}
+
+void Utilities::animateFadeout(QWidget *object, int msecs)
+{
+    animateProperty(object, msecs, "opacity", 1.0, 0.0);
 }
 
 void Utilities::animatePartialFadein(QWidget *object, int msecs)
@@ -946,6 +1037,35 @@ void Utilities::getDaysAndHoursToTimestamp(int64_t msecsTimestamps, int64_t &rem
     remainHours = floor((msecsTimestamps - currDate) / 36e5); //ms difference to hours
 }
 
+QProgressDialog *Utilities::showProgressDialog(ProgressHelper *progressHelper, QWidget *parent)
+{
+    QProgressDialog *progressDialog = new QProgressDialog(progressHelper->description(), QString()/*no cancel button*/, 0, 100, parent);
+    progressDialog->setWindowFlags(progressDialog->windowFlags() & ~Qt::WindowContextHelpButtonHint);
+
+    progressDialog->setWindowModality(Qt::WindowModal);
+    progressDialog->setMinimumDuration(0);
+    progressDialog->setValue(0);
+    progressDialog->setAutoClose(false);
+    progressDialog->setAutoReset(false);
+    QObject::connect(progressDialog, SIGNAL(close()), progressDialog, SLOT(deleteLater()));
+    progressDialog->show();
+    auto startTime = QDateTime::currentMSecsSinceEpoch();
+
+    QObject::connect(progressHelper, &ProgressHelper::progress, progressDialog, [progressDialog](double percentage){
+        progressDialog->setValue(static_cast<int>(percentage * 100));
+    });
+
+    QObject::connect(progressHelper, &ProgressHelper::completed, progressDialog, [progressDialog, startTime](){
+        progressDialog->setValue(100);
+
+        //delay closing if thing went too fast, to avoid show/close glitch
+        auto closeDelay = max(qint64(0), 350 - (QDateTime::currentMSecsSinceEpoch() - startTime) );
+        QTimer::singleShot(closeDelay, [progressDialog] () {progressDialog->close(); });
+    });
+
+    return progressDialog;
+}
+
 long long Utilities::getSystemsAvailableMemory()
 {
     long long availMemory = 0;
@@ -967,4 +1087,64 @@ long long Utilities::getSystemsAvailableMemory()
     availMemory = (pages * page_size);
 #endif
     return availMemory;
+}
+
+void Utilities::sleepMilliseconds(long long milliseconds)
+{
+#ifdef WIN32
+    Sleep(milliseconds);
+#else
+    usleep(milliseconds * 1000);
+#endif
+}
+
+int Utilities::partPer(long long  part, long long total, uint ref)
+{
+    // Use maximum precision
+    long double partd(part);
+    long double totald(total);
+    long double refd(ref);
+
+    // We can safely cast because the result should reasonably fit in an int.
+    return (static_cast<int>((partd * refd) / totald));
+}
+
+void MegaListenerFuncExecuter::setExecuteInAppThread(bool executeInAppThread)
+{
+    mExecuteInAppThread = executeInAppThread;
+}
+
+void MegaListenerFuncExecuter::onRequestFinish(MegaApi *api, MegaRequest *request, MegaError *e)
+{
+    if (mExecuteInAppThread)
+    {
+        MegaRequest *requestCopy = request->copy();
+        MegaError *errorCopy = e->copy();
+        QObject temporary;
+        QObject::connect(&temporary, &QObject::destroyed, qApp, [this, api, requestCopy, errorCopy](){
+
+            if (onRequestFinishCallback)
+            {
+                onRequestFinishCallback(api, requestCopy, errorCopy);
+            }
+
+            if (mAutoremove)
+            {
+                delete this;
+            }
+
+        }, Qt::QueuedConnection);
+    }
+    else
+    {
+        if (onRequestFinishCallback)
+        {
+            onRequestFinishCallback(api, request, e);
+        }
+
+        if (mAutoremove)
+        {
+            delete this;
+        }
+    }
 }

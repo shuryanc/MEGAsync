@@ -10,6 +10,8 @@
 #include "SettingsDialog.h"
 #include "MenuItemAction.h"
 #include "control/Preferences.h"
+#include "control/MegaController.h"
+#include "model/Model.h"
 #include "QCustomTransfersModel.h"
 #include <QGraphicsOpacityEffect>
 #include "HighDpiResize.h"
@@ -57,7 +59,6 @@ public:
 
     PSA_info* getPSAdata();
     void setUsage();
-    void setAvatar();
     void setTransfer(mega::MegaTransfer *transfer);
     void refreshTransferItems();
     void transferFinished(int error);
@@ -67,6 +68,7 @@ public:
     void setTransferring(bool value);
     void setOverQuotaMode(bool state);
     void setAccountType(int accType);
+    void setDisabledSyncTags(QSet<int> tags);
     void addSync(mega::MegaHandle h);
     void clearUserAttributes();
     void setPSAannouncement(int id, QString title, QString text, QString urlImage, QString textButton, QString linkButton);
@@ -97,6 +99,7 @@ public:
     long long getUnseenNotifications() const;
     void closeSyncsMenu();
     int getLoggedInMode() const;
+    void showNotifications();
 
 private:
     InfoDialog() = default;
@@ -157,11 +160,20 @@ private slots:
 
     void highLightMenuEntry(QAction* action);
 
+    void on_bDismissSyncSettings_clicked();
+    void on_bOpenSyncSettings_clicked();
+
+    void setAvatar();
+
 signals:
     void openTransferManager(int tab);
     void dismissStorageOverquota(bool oq);
-    void dismissTransferOverquota();
-    void dismissTransferAlmostOverquota();
+    // signal emitted when showing or dismissing the overquota message.
+    // parameter messageShown is true when alert is enabled, false when dismissed
+    void transferOverquotaMsgVisibilityChange(bool messageShown);
+    // signal emitted when showing or dismissing the almost overquota message.
+    // parameter messageShown is true when alert is enabled, false when dismissed
+    void almostTransferOverquotaMsgVisibilityChange(bool messageShown);
     void userActivity();
 
 private:
@@ -203,7 +215,7 @@ private:
     bool transferOverquotaAlertEnabled;
     bool transferAlmostOverquotaAlertEnabled;
     int storageState;
-    QuotaState transferOverquotaState;
+    QuotaState transferQuotaState;
     int actualAccountType;
     int loggedInMode = STATE_NONE;
     bool notificationsReady = false;
@@ -245,6 +257,8 @@ protected:
     QTimer transfersFinishedTimer;
     MegaApplication *app;
     Preferences *preferences;
+    Model *model;
+    Controller *controller;
     mega::MegaApi *megaApi;
     mega::MegaTransfer *activeDownload;
     mega::MegaTransfer *activeUpload;
