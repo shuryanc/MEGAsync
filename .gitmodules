@@ -1,3 +1,3 @@
 [submodule "src/MEGASync/mega"]
 	path = src/MEGASync/mega
-	url = https://github.com/shuryanc/sdk
+	url = git@github.com:shuryanc/sdk.git
