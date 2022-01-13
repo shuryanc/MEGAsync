@@ -9,7 +9,7 @@
 #include <QFontDatabase>
 #include <assert.h>
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     #include <signal.h>
     #include <condition_variable>
 #endif
@@ -24,7 +24,7 @@
 #include <Shellapi.h>
 #endif
 
-#if defined(WIN32) || defined(Q_OS_LINUX)
+#if defined(WIN32) || defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
 #include <QScreen>
 #endif
 
@@ -59,7 +59,7 @@ void msgHandler(QtMsgType type, const char *msg)
 }
 
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
 MegaApplication *theapp = NULL;
 bool waitForRestartSignal = false;
 std::mutex mtxcondvar;
@@ -229,7 +229,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
 
     // Ensure interesting signals are unblocked.
     sigset_t signalstounblock;
@@ -315,7 +315,7 @@ int main(int argc, char *argv[])
 
 #endif
 
-#if defined(Q_OS_LINUX)
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     if (!(getenv("DO_NOT_SET_QT_PLUGIN_PATH")))
     {
         if (QDir(QString::fromUtf8("/opt/mega/plugins")).exists())
@@ -333,7 +333,7 @@ int main(int argc, char *argv[])
     }
 #endif
 
-#if defined(Q_OS_LINUX) && QT_VERSION >= 0x050C00
+#if (defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)) && QT_VERSION >= 0x050C00
     // Linux && Qt >= 5.12.0
     if (!(getenv("DO_NOT_UNSET_XDG_SESSION_TYPE")))
     {
@@ -350,7 +350,7 @@ int main(int argc, char *argv[])
     ScaleFactorManager scaleFactorManager(OsType::WIN);
 #endif
 
-#if defined(Q_OS_LINUX)
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     ScaleFactorManager scaleFactorManager(OsType::LINUX);
 #endif
 
@@ -364,7 +364,7 @@ int main(int argc, char *argv[])
     }
 #endif
 
-#if defined(Q_OS_LINUX)
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
 #if QT_VERSION >= 0x050000
     if (!(getenv("DO_NOT_UNSET_QT_QPA_PLATFORMTHEME")) && getenv("QT_QPA_PLATFORMTHEME"))
     {
@@ -389,7 +389,7 @@ int main(int argc, char *argv[])
 
 
     MegaApplication app(argc, argv);
-#if defined(Q_OS_LINUX)
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     theapp = &app;
     appToWaitForSignal = QString::fromUtf8("\"%1\"").arg(MegaApplication::applicationFilePath());
     for (int i = 1; i < argc; i++)
@@ -413,7 +413,7 @@ int main(int argc, char *argv[])
     }
 #endif
 
-#if defined(Q_OS_LINUX) && QT_VERSION >= 0x050600
+#if (defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)) && QT_VERSION >= 0x050600
     for (const auto& screen : app.screens())
     {
         MegaApi::log(MegaApi::LOG_LEVEL_INFO, ("Device pixel ratio on '" +
@@ -560,7 +560,7 @@ int main(int argc, char *argv[])
     int toret = app.exec();
 
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     theapp = nullptr;
 #endif
     return toret;

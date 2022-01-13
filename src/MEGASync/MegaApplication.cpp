@@ -22,7 +22,7 @@
 
 #include <assert.h>
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     #include <signal.h>
     #include <condition_variable>
     #include <QSvgRenderer>
@@ -54,7 +54,7 @@ constexpr auto openUrlClusterMaxElapsedTime = std::chrono::seconds(5);
 
 void MegaApplication::loadDataPath()
 {
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     dataPath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
                + QString::fromUtf8("/data/Mega Limited/MEGAsync");
 #else
@@ -89,7 +89,7 @@ MegaApplication::MegaApplication(int &argc, char **argv) :
     logToStdout = true;
 #endif
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     if (argc == 2)
     {
          if (!strcmp("--debug", argv[1]))
@@ -418,7 +418,7 @@ void MegaApplication::initialize()
     indexing = false;
     setQuitOnLastWindowClosed(false);
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     isLinux = true;
 #else
     isLinux = false;
@@ -737,7 +737,7 @@ void MegaApplication::changeLanguage(QString languageCode)
     createTrayIcon();
 }
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
 void MegaApplication::setTrayIconFromTheme(QString icon)
 {
     QString name = QString(icon).replace(QString::fromUtf8("://images/"), QString::fromUtf8("mega")).replace(QString::fromUtf8(".svg"),QString::fromUtf8(""));
@@ -965,7 +965,7 @@ void MegaApplication::updateTrayIcon()
 
 void MegaApplication::start()
 {
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     QSvgRenderer qsr; //to have svg library linked
 #endif
 
@@ -2250,7 +2250,7 @@ void MegaApplication::periodicTasks()
 
     if (trayIcon)
     {
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
         if (counter==4 && getenv("XDG_CURRENT_DESKTOP") && !strcmp(getenv("XDG_CURRENT_DESKTOP"),"XFCE"))
         {
             trayIcon->hide();
@@ -5793,7 +5793,7 @@ void MegaApplication::trayIconActivated(QSystemTrayIcon::ActivationReason reason
         whyAmIBlocked();
     }
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     if (getenv("XDG_CURRENT_DESKTOP") && (
                 !strcmp(getenv("XDG_CURRENT_DESKTOP"),"ubuntu:GNOME")
                 || !strcmp(getenv("XDG_CURRENT_DESKTOP"),"LXDE")

@@ -31,22 +31,22 @@
 // See safe_readlink.h for details.
 
 #include <stddef.h>
-
+ #include <unistd.h>
 #include "third_party/lss/linux_syscall_support.h"
 
 namespace google_breakpad {
 
 bool SafeReadLink(const char* path, char* buffer, size_t buffer_size) {
-  // sys_readlink() does not add a NULL byte to |buffer|. In order to return
+  // readlink() does not add a NULL byte to |buffer|. In order to return
   // a NULL-terminated string in |buffer|, |buffer_size| should be at least
-  // one byte longer than the expected path length. Also, sys_readlink()
+  // one byte longer than the expected path length. Also, readlink()
   // returns the actual path length on success, which does not count the
   // NULL byte, so |result_size| should be less than |buffer_size|.
-  ssize_t result_size = sys_readlink(path, buffer, buffer_size);
-  if (result_size >= 0 && static_cast<size_t>(result_size) < buffer_size) {
-    buffer[result_size] = '\0';
-    return true;
-  }
+//  ssize_t result_size = readlink(path, buffer, buffer_size);
+//  if (result_size >= 0 && static_cast<size_t>(result_size) < buffer_size) {
+//    buffer[result_size] = '\0';
+//    return true;
+//  }
   return false;
 }
 

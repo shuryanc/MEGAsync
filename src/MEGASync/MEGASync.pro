@@ -85,14 +85,11 @@ CONFIG += USE_LIBRAW
 CONFIG += USE_FFMPEG
 
 macx {
-CONFIG += USE_PDFIUM
 }
 else:win32 {
-CONFIG += USE_PDFIUM
 DEFINES += NOMINMAX
 }
 else:contains(BUILD_ARCH, x86_64) { #Notice this might not work for clang!
-CONFIG += USE_PDFIUM
 }
 
 unix:!macx {
@@ -208,13 +205,10 @@ DEFINES += REQUIRE_HAVE_LIBRAW
 DEFINES += REQUIRE_USE_MEDIAINFO
 
 macx {
-DEFINES += REQUIRE_HAVE_PDFIUM
 }
 else:win32 {
-DEFINES += REQUIRE_HAVE_PDFIUM
 }
 else:contains(BUILD_ARCH, x86_64) { #Notice this might not work for clang!
-DEFINES += REQUIRE_HAVE_PDFIUM
 }
 
 #DEFINES += REQUIRE_ENABLE_CHAT

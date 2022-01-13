@@ -100,7 +100,7 @@ class MegaApplication : public QApplication, public mega::MegaListener, public S
 {
     Q_OBJECT
 
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
     void setTrayIconFromTheme(QString icon);
 #endif
 

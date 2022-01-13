@@ -27,6 +27,9 @@
 #include <windows.h>
 #endif
 
+#include <unistd.h>
+
+
 //#define MEGA_LOGGER QString::fromUtf8("MEGA_LOGGER")
 //#define ENABLE_MEGASYNC_LOGS QString::fromUtf8("MEGA_ENABLE_LOGS")
 #define MAX_MESSAGE_SIZE 4096

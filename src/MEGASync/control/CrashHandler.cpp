@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <sstream>
 #include "MegaApplication.h"
+#include <fcntl.h>
 
 using namespace mega;
 using namespace std;
@@ -223,8 +224,8 @@ string getDistroVersion()
                 ucontext_t* uc = (ucontext_t*) secret;
                 pnt = (void *)uc->uc_mcontext->__ss.__rip;
             #elif defined(__x86_64__)
-                ucontext_t* uc = (ucontext_t*) secret;
-                pnt = (void*) uc->uc_mcontext.gregs[REG_RIP] ;
+            //    ucontext_t* uc = (ucontext_t*) secret;
+            //    pnt = (void*) uc->uc_mcontext.gregs[REG_RIP] ;
             #elif (defined (__ppc__)) || (defined (__powerpc__))
                 ucontext_t* uc = (ucontext_t*) secret;
                 pnt = (void*) uc->uc_mcontext.regs->nip ;
@@ -248,24 +249,24 @@ string getDistroVersion()
 
         oss << "Stacktrace:\n";
         void *stack[32];
-        size_t size;
-        size = backtrace(stack, 32);
-        if (size > 1)
-        {
-            stack[1] = pnt;
-            char **messages = backtrace_symbols(stack, size);
-            for (unsigned int i = 1; i < size; i++)
-            {
-                oss << messages[i] << "\n";
-            }
-        }
-        else
-        {
-            oss << "Error getting stacktrace\n";
-        }
+//        size_t size;
+//        size = backtrace(stack, 32);
+//        if (size > 1)
+//        {
+//            stack[1] = pnt;
+//            char **messages = backtrace_symbols(stack, size);
+//            for (unsigned int i = 1; i < size; i++)
+//            {
+//                oss << messages[i] << "\n";
+//            }
+//        }
+//        else
+//        {
+//            oss << "Error getting stacktrace\n";
+//        }
 
-        write(dump_file, oss.str().c_str(), oss.str().size());
-        close(dump_file);
+//        write(dump_file, oss.str().c_str(), oss.str().size());
+//        close(dump_file);
 
         CrashHandler::tryReboot();
         exit(128+sig);
@@ -287,20 +288,20 @@ class CrashHandlerPrivate
 public:
     CrashHandlerPrivate()
     {
-        pHandler = NULL;
+//        pHandler = NULL;
     }
 
     ~CrashHandlerPrivate()
     {
-        delete pHandler;
+//        delete pHandler;
     }
 
     void InitCrashHandler(const QString& dumpPath);
-    static google_breakpad::ExceptionHandler* pHandler;
+//    static google_breakpad::ExceptionHandler* pHandler;
     static bool bReportCrashesToSystem;
 };
 
-google_breakpad::ExceptionHandler* CrashHandlerPrivate::pHandler = NULL;
+//google_breakpad::ExceptionHandler* CrashHandlerPrivate::pHandler = NULL;
 bool CrashHandlerPrivate::bReportCrashesToSystem = true;
 
 /************************************************************************/
@@ -311,6 +312,8 @@ bool DumpCallback(const wchar_t* _dump_dir,const wchar_t* _minidump_id,void* con
 #elif defined(Q_OS_LINUX)
 bool DumpCallback(const google_breakpad::MinidumpDescriptor &,void *context, bool success)
 #elif defined(Q_OS_MAC)
+bool DumpCallback(const char* _dump_dir,const char* _minidump_id,void *context, bool success)
+#elif defined(Q_OS_FREEBSD)
 bool DumpCallback(const char* _dump_dir,const char* _minidump_id,void *context, bool success)
 #endif
 {
@@ -332,8 +335,8 @@ bool DumpCallback(const char* _dump_dir,const char* _minidump_id,void *context, 
 
 void CrashHandlerPrivate::InitCrashHandler(const QString& dumpPath)
 {
-    if ( pHandler != NULL )
-        return;
+//    if ( pHandler != NULL )
+      return;
 
 #if defined(Q_OS_WIN32)
     std::wstring pathAsStr = (const wchar_t*)dumpPath.utf16();
@@ -436,7 +439,7 @@ void CrashHandler::tryReboot()
 #ifdef WIN32
         Sleep(2000);
 #else
-        sleep(2);
+//        sleep(2);
 #endif
     }
     else
@@ -470,7 +473,8 @@ void CrashHandler::setReportCrashesToSystem(bool report)
 
 bool CrashHandler::writeMinidump()
 {
-    bool res = d->pHandler->WriteMinidump();
+//    bool res = d->pHandler->WriteMinidump();
+	bool res = false;
     if (res) {
         qDebug("BreakpadQt: writeMinidump() successed.");
     } else {

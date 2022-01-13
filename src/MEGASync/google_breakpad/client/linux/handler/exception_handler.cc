@@ -53,7 +53,7 @@
 //                                          DoDump  (writes minidump)
 //                                            |
 //                                            V
-//                                         sys_exit
+//                                           exit
 //
 
 // This code is a little fragmented. Different functions of the ExceptionHandler
@@ -67,12 +67,12 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/limits.h>
+#include <sys/limits.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <sys/mman.h>
-#include <sys/prctl.h>
+#include <sys/procctl.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -94,6 +94,10 @@
 #include "client/linux/minidump_writer/minidump_writer.h"
 #include "common/linux/eintr_wrapper.h"
 #include "third_party/lss/linux_syscall_support.h"
+#include <machine/reg.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/thr.h>
 
 #if defined(__ANDROID__)
 #include "linux/sched.h"
@@ -103,10 +107,14 @@
 #define PR_SET_PTRACER 0x59616d61
 #endif
 
+#ifndef __NR_gettid
+#define __NR_gettid 224
+#endif
+
 #if !defined(__GLIBC__) || ((__GLIBC__ < 2) || ((__GLIBC__ == 2) && (__GLIBC_MINOR__ < 30 )))
 // A wrapper for the tgkill syscall: send a signal to a specific thread.
 static int tgkill(pid_t tgid, pid_t tid, int sig) {
-  return syscall(__NR_tgkill, tgid, tid, sig);
+//  return syscall(__NR_tgkill, tgid, tid, sig);
   return 0;
 }
 #endif
@@ -148,12 +156,12 @@ void InstallAlternateStackLocked() {
 
   // Only set an alternative stack if there isn't already one, or if the current
   // one is too small.
-  if (sys_sigaltstack(NULL, &old_stack) == -1 || !old_stack.ss_sp ||
+  if (sigaltstack(NULL, &old_stack) == -1 || !old_stack.ss_sp ||
       old_stack.ss_size < kSigStackSize) {
     new_stack.ss_sp = malloc(kSigStackSize);
     new_stack.ss_size = kSigStackSize;
 
-    if (sys_sigaltstack(&new_stack, NULL) == -1) {
+    if (sigaltstack(&new_stack, NULL) == -1) {
       free(new_stack.ss_sp);
       return;
     }
@@ -167,19 +175,19 @@ void RestoreAlternateStackLocked() {
     return;
 
   stack_t current_stack;
-  if (sys_sigaltstack(NULL, &current_stack) == -1)
+  if (sigaltstack(NULL, &current_stack) == -1)
     return;
 
   // Only restore the old_stack if the current alternative stack is the one
   // installed by the call to InstallAlternateStackLocked.
   if (current_stack.ss_sp == new_stack.ss_sp) {
     if (old_stack.ss_sp) {
-      if (sys_sigaltstack(&old_stack, NULL) == -1)
+      if (sigaltstack(&old_stack, NULL) == -1)
         return;
     } else {
       stack_t disable_stack;
       disable_stack.ss_flags = SS_DISABLE;
-      if (sys_sigaltstack(&disable_stack, NULL) == -1)
+      if (sigaltstack(&disable_stack, NULL) == -1)
         return;
     }
   }
@@ -393,24 +401,26 @@ bool ExceptionHandler::HandleSignal(int, siginfo_t* info, void* uc) {
   // Allow ourselves to be dumped if the signal is trusted.
   bool signal_trusted = info->si_code > 0;
   bool signal_pid_trusted = info->si_code == SI_USER ||
-      info->si_code == SI_TKILL;
+      info->si_code == SI_LWP;
   if (signal_trusted || (signal_pid_trusted && info->si_pid == getpid())) {
-    sys_prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+//    sys_prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+	int enable_trace = PROC_TRACE_CTL_ENABLE;
+	procctl(P_PID, getpid(), PROC_TRACE_CTL, &enable_trace);
   }
   CrashContext context;
   memcpy(&context.siginfo, info, sizeof(siginfo_t));
   memcpy(&context.context, uc, sizeof(ucontext_t));
-#if !defined(__ARM_EABI__) && !defined(__mips__)
+//#if !defined(__ARM_EABI__) && !defined(__mips__)
   // FP state is not part of user ABI on ARM Linux.
   // In case of MIPS Linux FP state is already part of struct ucontext
   // and 'float_state' is not a member of CrashContext.
-  ucontext_t *uc_ptr = (ucontext_t*)uc;
-  if (uc_ptr->uc_mcontext.fpregs) {
-    memcpy(&context.float_state,
-           uc_ptr->uc_mcontext.fpregs,
-           sizeof(context.float_state));
-  }
-#endif
+//  ucontext_t *uc_ptr = (ucontext_t*)uc;
+//  if (uc_ptr->uc_mcontext.fpregs) {
+//    memcpy(&context.float_state,
+//           uc_ptr->uc_mcontext.fpregs,
+//           sizeof(context.float_state));
+//  }
+//#endif
   context.tid = syscall(__NR_gettid);
   if (crash_handler_ != NULL) {
     if (crash_handler_(&context, sizeof(context), callback_context_)) {
@@ -461,55 +471,58 @@ bool ExceptionHandler::GenerateDump(CrashContext *context) {
   // kernels, but we need to know the PID of the cloned process before we
   // can do this. Create a pipe here which we can use to block the
   // cloned process after creating it, until we have explicitly enabled ptrace
-  if (sys_pipe(fdes) == -1)
+  if (pipe(fdes) == -1)
   {
     // Creating the pipe failed. We'll log an error but carry on anyway,
     // as we'll probably still get a useful crash report. All that will happen
     // is the write() and read() calls will fail with EBADF
     static const char no_pipe_msg[] = "ExceptionHandler::GenerateDump \
-                                       sys_pipe failed:";
+                                       pipe failed:";
     logger::write(no_pipe_msg, sizeof(no_pipe_msg) - 1);
     logger::write(strerror(errno), strlen(strerror(errno)));
     logger::write("\n", 1);
   }
 
-  const pid_t child = sys_clone(
-      ThreadEntry, stack, CLONE_FILES | CLONE_FS | CLONE_UNTRACED,
-      &thread_arg, NULL, NULL, NULL);
+//  const pid_t child = sys_clone(
+//      ThreadEntry, stack, CLONE_FILES | CLONE_FS | CLONE_UNTRACED,
+//      &thread_arg, NULL, NULL, NULL);
 
-  int r, status;
+
+//  int r, status;
   // Allow the child to ptrace us
-  sys_prctl(PR_SET_PTRACER, child, 0, 0, 0);
-  SendContinueSignalToChild();
-  do {
-    r = sys_waitpid(child, &status, __WALL);
-  } while (r == -1 && errno == EINTR);
+//  int arg = PROC_TRAPCAP_CTL_ENABLE;
+  //sys_prctl(PR_SET_PTRACER, child, 0, 0, 0);
+//  procctl(P_PID, child, PROC_TRAPCAP_CTL, &arg);
+//  SendContinueSignalToChild();
+//  do {
+//    r = waitpid(child, &status, WTRAPPED);
+//  } while (r == -1 && errno == EINTR);
 
-  sys_close(fdes[0]);
-  sys_close(fdes[1]);
+//  close(fdes[0]);
+//  close(fdes[1]);
 
-  if (r == -1) {
-    static const char msg[] = "ExceptionHandler::GenerateDump waitpid failed:";
-    logger::write(msg, sizeof(msg) - 1);
-    logger::write(strerror(errno), strlen(strerror(errno)));
-    logger::write("\n", 1);
-  }
+//  if (r == -1) {
+//    static const char msg[] = "ExceptionHandler::GenerateDump waitpid failed:";
+//    logger::write(msg, sizeof(msg) - 1);
+//    logger::write(strerror(errno), strlen(strerror(errno)));
+//    logger::write("\n", 1);
+//  }
 
-  bool success = r != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
-  if (callback_)
-    success = callback_(minidump_descriptor_, callback_context_, success);
-  return success;
+//  bool success = r != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+//  if (callback_)
+//    success = callback_(minidump_descriptor_, callback_context_, success);
+  return false;
 }
 
 // This function runs in a compromised context: see the top of the file.
 void ExceptionHandler::SendContinueSignalToChild() {
   static const char okToContinueMessage = 'a';
   int r;
-  r = HANDLE_EINTR(sys_write(fdes[1], &okToContinueMessage, sizeof(char)));
+  r = HANDLE_EINTR(write(fdes[1], &okToContinueMessage, sizeof(char)));
   if (r == -1)
   {
     static const char msg[] = "ExceptionHandler::SendContinueSignalToChild \
-                               sys_write failed:";
+                               write failed:";
     logger::write(msg, sizeof(msg) - 1);
     logger::write(strerror(errno), strlen(strerror(errno)));
     logger::write("\n", 1);
@@ -521,11 +534,11 @@ void ExceptionHandler::SendContinueSignalToChild() {
 void ExceptionHandler::WaitForContinueSignal() {
   int r;
   char receivedMessage;
-  r = HANDLE_EINTR(sys_read(fdes[0], &receivedMessage, sizeof(char)));
+  r = HANDLE_EINTR(read(fdes[0], &receivedMessage, sizeof(char)));
   if (r == -1)
   {
     static const char msg[] = "ExceptionHandler::WaitForContinueSignal \
-                               sys_read failed:";
+                               read failed:";
     logger::write(msg, sizeof(msg) - 1);
     logger::write(strerror(errno), strlen(strerror(errno)));
     logger::write("\n", 1);
@@ -536,111 +549,112 @@ void ExceptionHandler::WaitForContinueSignal() {
 // Runs on the cloned process.
 bool ExceptionHandler::DoDump(pid_t crashing_process, const void* context,
                               size_t context_size) {
-  if (minidump_descriptor_.IsFD()) {
-    return google_breakpad::WriteMinidump(minidump_descriptor_.fd(),
-                                          minidump_descriptor_.size_limit(),
-                                          crashing_process,
-                                          context,
-                                          context_size,
-                                          mapping_list_,
-                                          app_memory_list_);
-  }
-  return google_breakpad::WriteMinidump(minidump_descriptor_.path(),
-                                        minidump_descriptor_.size_limit(),
-                                        crashing_process,
-                                        context,
-                                        context_size,
-                                        mapping_list_,
-                                        app_memory_list_);
+//  if (minidump_descriptor_.IsFD()) {
+//    return google_breakpad::WriteMinidump(minidump_descriptor_.fd(),
+//                                          minidump_descriptor_.size_limit(),
+//                                          crashing_process,
+//                                          context,
+//                                          context_size,
+//                                          mapping_list_,
+//                                          app_memory_list_);
+//  }
+//  return google_breakpad::WriteMinidump(minidump_descriptor_.path(),
+//                                        minidump_descriptor_.size_limit(),
+//                                        crashing_process,
+//                                        context,
+//                                        context_size,
+//                                        mapping_list_,
+//                                        app_memory_list_);
 }
 
 // static
 bool ExceptionHandler::WriteMinidump(const string& dump_path,
                                      MinidumpCallback callback,
                                      void* callback_context) {
-  MinidumpDescriptor descriptor(dump_path);
-  ExceptionHandler eh(descriptor, NULL, callback, callback_context, false, -1);
-  return eh.WriteMinidump();
+//  MinidumpDescriptor descriptor(dump_path);
+//  ExceptionHandler eh(descriptor, NULL, callback, callback_context, false, -1);
+//  return eh.WriteMinidump();
 }
 
 // In order to making using EBP to calculate the desired value for ESP
 // a valid operation, ensure that this function is compiled with a
 // frame pointer using the following attribute. This attribute
 // is supported on GCC but not on clang.
-#if defined(__i386__) && defined(__GNUC__) && !defined(__clang__)
-__attribute__((optimize("no-omit-frame-pointer")))
-#endif
+//#if defined(__i386__) && defined(__GNUC__) && !defined(__clang__)
+//__attribute__((optimize("no-omit-frame-pointer")))
+//#endif
 bool ExceptionHandler::WriteMinidump() {
-  if (!IsOutOfProcess() && !minidump_descriptor_.IsFD()) {
+//  if (!IsOutOfProcess() && !minidump_descriptor_.IsFD()) {
     // Update the path of the minidump so that this can be called multiple times
     // and new files are created for each minidump.  This is done before the
     // generation happens, as clients may want to access the MinidumpDescriptor
     // after this call to find the exact path to the minidump file.
-    minidump_descriptor_.UpdatePath();
-  } else if (minidump_descriptor_.IsFD()) {
+//    minidump_descriptor_.UpdatePath();
+//  } else if (minidump_descriptor_.IsFD()) {
     // Reposition the FD to its beginning and resize it to get rid of the
     // previous minidump info.
-    lseek(minidump_descriptor_.fd(), 0, SEEK_SET);
-    ignore_result(ftruncate(minidump_descriptor_.fd(), 0));
-  }
+//    lseek(minidump_descriptor_.fd(), 0, SEEK_SET);
+//    ignore_result(ftruncate(minidump_descriptor_.fd(), 0));
+//  }
 
   // Allow this process to be dumped.
-  sys_prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+  //sys_prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+//  int enable_trace = PROC_TRACE_CTL_ENABLE;
+//  procctl(P_PID, getpid(), PROC_TRACE_CTL, &enable_trace);
+//  CrashContext context;
+//  int getcontext_result = getcontext(&context.context);
+//  if (getcontext_result)
+//    return false;
 
-  CrashContext context;
-  int getcontext_result = getcontext(&context.context);
-  if (getcontext_result)
-    return false;
-
-#if defined(__i386__)
+//#if defined(__i386__)
   // In CPUFillFromUContext in minidumpwriter.cc the stack pointer is retrieved
   // from REG_UESP instead of from REG_ESP. REG_UESP is the user stack pointer
   // and it only makes sense when running in kernel mode with a different stack
   // pointer. When WriteMiniDump is called during normal processing REG_UESP is
   // zero which leads to bad minidump files.
-  if (!context.context.uc_mcontext.gregs[REG_UESP]) {
+//  if (!context.context.uc_mcontext.gregs[REG_UESP]) {
     // If REG_UESP is set to REG_ESP then that includes the stack space for the
     // CrashContext object in this function, which is about 128 KB. Since the
     // Linux dumper only records 32 KB of stack this would mean that nothing
     // useful would be recorded. A better option is to set REG_UESP to REG_EBP,
     // perhaps with a small negative offset in case there is any code that
     // objects to them being equal.
-    context.context.uc_mcontext.gregs[REG_UESP] =
-      context.context.uc_mcontext.gregs[REG_EBP] - 16;
+//    context.context.uc_mcontext.gregs[REG_UESP] =
+//      context.context.uc_mcontext.gregs[REG_EBP] - 16;
     // The stack saving is based off of REG_ESP so it must be set to match the
     // new REG_UESP.
-    context.context.uc_mcontext.gregs[REG_ESP] =
-      context.context.uc_mcontext.gregs[REG_UESP];
-  }
-#endif
+//    context.context.uc_mcontext.gregs[REG_ESP] =
+//      context.context.uc_mcontext.gregs[REG_UESP];
+//  }
+//#endif
 
-#if !defined(__ARM_EABI__) && !defined(__mips__)
+//#if !defined(__ARM_EABI__) && !defined(__mips__)
   // FPU state is not part of ARM EABI ucontext_t.
-  memcpy(&context.float_state, context.context.uc_mcontext.fpregs,
-         sizeof(context.float_state));
-#endif
-  context.tid = sys_gettid();
+//  memcpy(&context.float_state, context.context.uc_mcontext.fpregs,
+//         sizeof(context.float_state));
+//#endif
+//  context.tid = sys_gettid();
 
   // Add an exception stream to the minidump for better reporting.
-  memset(&context.siginfo, 0, sizeof(context.siginfo));
-  context.siginfo.si_signo = MD_EXCEPTION_CODE_LIN_DUMP_REQUESTED;
-#if defined(__i386__)
-  context.siginfo.si_addr =
-      reinterpret_cast<void*>(context.context.uc_mcontext.gregs[REG_EIP]);
-#elif defined(__x86_64__)
-  context.siginfo.si_addr =
-      reinterpret_cast<void*>(context.context.uc_mcontext.gregs[REG_RIP]);
-#elif defined(__arm__)
-  context.siginfo.si_addr =
-      reinterpret_cast<void*>(context.context.uc_mcontext.arm_pc);
-#elif defined(__mips__)
-  context.siginfo.si_addr =
-      reinterpret_cast<void*>(context.context.uc_mcontext.pc);
-#else
-#error "This code has not been ported to your platform yet."
-#endif
+//  memset(&context.siginfo, 0, sizeof(context.siginfo));
+//  context.siginfo.si_signo = MD_EXCEPTION_CODE_LIN_DUMP_REQUESTED;
+//#if defined(__i386__)
+//  context.siginfo.si_addr =
+//      reinterpret_cast<void*>(context.context.uc_mcontext.gregs[REG_EIP]);
+//#elif defined(__x86_64__)
+//  context.siginfo.si_addr =
+//      reinterpret_cast<void*>(context.context.uc_mcontext.gregs[REG_RIP]);
+//#elif defined(__arm__)
+//  context.siginfo.si_addr =
+//      reinterpret_cast<void*>(context.context.uc_mcontext.arm_pc);
+//#elif defined(__mips__)
+//  context.siginfo.si_addr =
+//      reinterpret_cast<void*>(context.context.uc_mcontext.pc);
+//#else
+//#error "This code has not been ported to your platform yet."
+//#endif
 
-  return GenerateDump(&context);
+//  return GenerateDump(&context);
 }
 
 void ExceptionHandler::AddMappingInfo(const string& name,
@@ -648,39 +662,39 @@ void ExceptionHandler::AddMappingInfo(const string& name,
                                       uintptr_t start_address,
                                       size_t mapping_size,
                                       size_t file_offset) {
-  MappingInfo info;
-  info.start_addr = start_address;
-  info.size = mapping_size;
-  info.offset = file_offset;
-  strncpy(info.name, name.c_str(), sizeof(info.name) - 1);
-  info.name[sizeof(info.name) - 1] = '\0';
+//  MappingInfo info;
+//  info.start_addr = start_address;
+//  info.size = mapping_size;
+//  info.offset = file_offset;
+//  strncpy(info.name, name.c_str(), sizeof(info.name) - 1);
+//  info.name[sizeof(info.name) - 1] = '\0';
 
-  MappingEntry mapping;
-  mapping.first = info;
-  memcpy(mapping.second, identifier, sizeof(MDGUID));
-  mapping_list_.push_back(mapping);
+//  MappingEntry mapping;
+//  mapping.first = info;
+//  memcpy(mapping.second, identifier, sizeof(MDGUID));
+//  mapping_list_.push_back(mapping);
 }
 
 void ExceptionHandler::RegisterAppMemory(void* ptr, size_t length) {
-  AppMemoryList::iterator iter =
-    std::find(app_memory_list_.begin(), app_memory_list_.end(), ptr);
-  if (iter != app_memory_list_.end()) {
+//  AppMemoryList::iterator iter =
+//    std::find(app_memory_list_.begin(), app_memory_list_.end(), ptr);
+//  if (iter != app_memory_list_.end()) {
     // Don't allow registering the same pointer twice.
-    return;
-  }
+//    return;
+//  }
 
-  AppMemory app_memory;
-  app_memory.ptr = ptr;
-  app_memory.length = length;
-  app_memory_list_.push_back(app_memory);
+//  AppMemory app_memory;
+//  app_memory.ptr = ptr;
+//  app_memory.length = length;
+//  app_memory_list_.push_back(app_memory);
 }
 
 void ExceptionHandler::UnregisterAppMemory(void* ptr) {
-  AppMemoryList::iterator iter =
-    std::find(app_memory_list_.begin(), app_memory_list_.end(), ptr);
-  if (iter != app_memory_list_.end()) {
-    app_memory_list_.erase(iter);
-  }
+//  AppMemoryList::iterator iter =
+//    std::find(app_memory_list_.begin(), app_memory_list_.end(), ptr);
+//  if (iter != app_memory_list_.end()) {
+//    app_memory_list_.erase(iter);
+//  }
 }
 
 // static
@@ -688,16 +702,17 @@ bool ExceptionHandler::WriteMinidumpForChild(pid_t child,
                                              pid_t child_blamed_thread,
                                              const string& dump_path,
                                              MinidumpCallback callback,
-                                             void* callback_context) {
-  // This function is not run in a compromised context.
-  MinidumpDescriptor descriptor(dump_path);
-  descriptor.UpdatePath();
-  if (!google_breakpad::WriteMinidump(descriptor.path(),
-                                      child,
-                                      child_blamed_thread))
-      return false;
+//                                             void* callback_context) {
+//  // This function is not run in a compromised context.
+//  MinidumpDescriptor descriptor(dump_path);
+//  descriptor.UpdatePath();
+//  if (!google_breakpad::WriteMinidump(descriptor.path(),
+//                                      child,
+//                                      child_blamed_thread))
+//      return false;
 
-  return callback ? callback(descriptor, callback_context, true) : true;
-}
+//  return callback ? callback(descriptor, callback_context, true) : true;
+//}
+	void* callback_context) {}
 
 }  // namespace google_breakpad
